@@ -1,0 +1,1529 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Многопользовательская доска Типографии Прайс</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="container">
+    <header id="main-header">
+        <h1>🏭 Планировщик Типографии Прайс</h1>
+        <div class="alert-banner" id="alert-banner" style="display: none;"></div>
+        <div class="connection-status" id="connection-status">
+            <div class="status-indicator status-offline" id="status-indicator"></div>
+            <span id="status-text">Не подключено</span>
+        </div>
+    </header>
+
+    <div class="users-list" id="users-list">
+        <!-- Список пользователей будет здесь -->
+    </div>
+
+    <div class="controls">
+        <button id="connect-btn">Подключиться</button>
+        <!--        <button id="save-board">💾 Сохранить</button>-->
+        <!--        <button id="reset-board">🔄 Сбросить</button>-->
+        <!--        <button id="reset-server-board" class="delete-btn">🗑️ Сброс сервера</button>-->
+
+        <div class="zoom-controls">
+            <button class="zoom-btn" id="zoom-out">-</button>
+            <span class="zoom-level" id="zoom-level">100%</span>
+            <button class="zoom-btn" id="zoom-in">+</button>
+            <button class="zoom-btn" id="zoom-reset">⟳</button>
+        </div>
+    </div>
+
+    <div class="board-container">
+        <div class="board" id="board">
+            <!-- Колонки будут созданы здесь через JS -->
+        </div>
+    </div>
+</div>
+
+<div class="save-notification" id="save-notification">Данные сохранены</div>
+
+<!-- Уведомление для ссылок -->
+<div class="overlay" id="link-overlay"></div>
+<div class="link-notification" id="link-notification">
+    <h3>Открытие ссылки</h3>
+    <p id="link-notification-text"></p>
+    <div class="link-notification-buttons">
+        <button id="link-open-btn">Открыть</button>
+        <button id="link-copy-btn">Копировать ссылку</button>
+        <button id="link-cancel-btn">Отмена</button>
+    </div>
+</div>
+
+<script>
+    // Данные доски
+    let boardData = {
+        columns: [
+            { id: 1, title: "Заказы", cards: [], collapsed: false },
+            { id: 2, title: "Печать KBA", cards: [], collapsed: false },
+            { id: 3, title: "Печать Roland", cards: [], collapsed: false },
+            { id: 4, title: "Тиснение", cards: [], collapsed: false },
+            { id: 5, title: "УФ", cards: [], collapsed: false },
+            { id: 6, title: "Ламинация", cards: [], collapsed: false },
+            { id: 7, title: "Кашировка", cards: [], collapsed: false },
+            { id: 8, title: "Резка", cards: [], collapsed: false },
+            { id: 9, title: "Конгрев", cards: [], collapsed: false },
+            { id: 10, title: "Высечка", cards: [], collapsed: false },
+            { id: 11, title: "Вырубка БРАУЗ", cards: [], collapsed: false },
+            { id: 12, title: "Вырубка ЦЕНТУРИОН", cards: [], collapsed: false },
+            { id: 13, title: "Выборка", cards: [], collapsed: false },
+            { id: 14, title: "Пленка", cards: [], collapsed: false },
+            { id: 15, title: "Окошки", cards: [], collapsed: false },
+            { id: 16, title: "Склейка", cards: [], collapsed: false },
+            { id: 17, title: "Сверловка", cards: [], collapsed: false },
+            { id: 18, title: "Брошюровка", cards: [], collapsed: false },
+            { id: 19, title: "Подрезка", cards: [], collapsed: false },
+            { id: 20, title: "Упаковка", cards: [], collapsed: false },
+            { id: 21, title: "Склад", cards: [], collapsed: false }
+        ]
+    };
+
+    // Элементы DOM
+    const boardElement = document.getElementById('board');
+    const saveButton = document.getElementById('save-board');
+    const resetButton = document.getElementById('reset-board');
+    const resetServerButton = document.getElementById('reset-server-board');
+    const saveNotification = document.getElementById('save-notification');
+    const connectButton = document.getElementById('connect-btn');
+    const statusIndicator = document.getElementById('status-indicator');
+    const statusText = document.getElementById('status-text');
+    const usersList = document.getElementById('users-list');
+    const connectionStatus = document.getElementById('connection-status');
+    const zoomInButton = document.getElementById('zoom-in');
+    const zoomOutButton = document.getElementById('zoom-out');
+    const zoomResetButton = document.getElementById('zoom-reset');
+    const zoomLevelDisplay = document.getElementById('zoom-level');
+    const alertBanner = document.getElementById('alert-banner');
+    const linkOverlay = document.getElementById('link-overlay');
+    const linkNotification = document.getElementById('link-notification');
+    const linkNotificationText = document.getElementById('link-notification-text');
+    const linkOpenBtn = document.getElementById('link-open-btn');
+    const linkCopyBtn = document.getElementById('link-copy-btn');
+    const linkCancelBtn = document.getElementById('link-cancel-btn');
+    const mainHeader = document.getElementById('main-header');
+
+    // WebSocket соединение
+    let socket = null;
+    let isConnected = false;
+    let currentUser = null;
+    let users = {};
+    let serverAddress = '';
+
+    // Настройки масштабирования
+    let zoomLevel = parseFloat(localStorage.getItem('kanbanZoomLevel') || 1);
+    const minZoom = 0.5;
+    const maxZoom = 2;
+    const zoomStep = 0.1;
+
+    // Доступные теги
+    const availableTags = [
+        { id: 'design', name: 'Формы' },
+        { id: 'print', name: 'Бумага' },
+        { id: 'cut', name: 'Подрезка' },
+        { id: 'bind', name: 'Гофра' },
+        { id: 'done', name: 'Пленка' },
+        { id: 'one', name: '1прогон' },
+        { id: 'two', name: '2прогон' }
+    ];
+
+    // Виды изделий
+    const productTypes = [
+        'Этик', 'КорКарт', 'КорГК', 'Буклет', 'Вкладыш', 'Обечайка', 'Ярлык'
+    ];
+
+    // Виды материалов
+    const materialTypes = [
+        'Этик', 'ЭтМет', 'Офсет', 'Меловка', 'Карт', 'КартМет', 'КаширГК', 'ГК', 'Пленка'
+    ];
+
+    // Перетаскивание
+    let draggedCard = null;
+    let sourceColumnId = null;
+
+    // Инициализация доски
+    function initBoard() {
+        // Пытаемся загрузить сохраненные данные
+        const savedData = localStorage.getItem('typographyKanban');
+        if (savedData) {
+            try {
+                const parsedData = JSON.parse(savedData);
+                // Сохраняем состояние свернутости колонок
+                if (parsedData.columns) {
+                    parsedData.columns.forEach(column => {
+                        const existingColumn = boardData.columns.find(c => c.id === column.id);
+                        if (existingColumn) {
+                            existingColumn.collapsed = column.collapsed || false;
+                            existingColumn.cards = column.cards || [];
+                        }
+                    });
+                }
+            } catch (e) {
+                console.error('Ошибка загрузки данных:', e);
+            }
+        }
+
+        // Применяем сохраненный уровень масштабирования
+        applyZoom();
+
+        renderBoard();
+
+        // Запускаем проверку дедлайнов каждые 5 минут
+        setInterval(checkDeadlines, 5 * 60 * 1000);
+    }
+
+    // Функция проверки дедлайнов
+    function checkDeadlines() {
+        const now = new Date();
+        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+        let hasOverdue = false;
+        let hasDueSoon = false;
+
+        boardData.columns.forEach(column => {
+            column.cards.forEach(card => {
+                if (card.deadline) {
+                    const deadlineDate = new Date(card.deadline);
+                    const deadlineDay = new Date(deadlineDate.getFullYear(), deadlineDate.getMonth(), deadlineDate.getDate());
+
+                    const diffTime = deadlineDay - today;
+                    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+                    // Сохраняем информацию о статусе дедлайна в карточке
+                    card.deadlineStatus = diffDays < 0 ? 'overdue' :
+                        diffDays === 0 ? 'due-today' :
+                            diffDays <= 2 ? 'due-soon' : 'normal';
+
+                    if (diffDays < 0) hasOverdue = true;
+                    if (diffDays <= 2 && diffDays >= 0) hasDueSoon = true;
+                }
+            });
+        });
+
+        // Перерисовываем доску для применения стилей
+        renderBoard();
+
+        // Показываем уведомление, если есть просроченные заказы
+        // if (hasOverdue) {
+        //     showNotification('Внимание! Есть просроченные заказы!');
+        // }
+    }
+
+    // Функции масштабирования
+    function applyZoom() {
+        document.documentElement.style.setProperty('--zoom-level', zoomLevel);
+        zoomLevelDisplay.textContent = `${Math.round(zoomLevel * 100)}%`;
+        localStorage.setItem('kanbanZoomLevel', zoomLevel.toString());
+
+        // Перерисовываем доску для применения нового масштаба
+        renderBoard();
+    }
+
+    function zoomIn() {
+        if (zoomLevel < maxZoom) {
+            zoomLevel = Math.min(maxZoom, zoomLevel + zoomStep);
+            applyZoom();
+        }
+    }
+
+    function zoomOut() {
+        if (zoomLevel > minZoom) {
+            zoomLevel = Math.max(minZoom, zoomLevel - zoomStep);
+            applyZoom();
+        }
+    }
+
+    function resetZoom() {
+        zoomLevel = 1;
+        applyZoom();
+    }
+
+    // Обработчики событий клавиатуры для масштабирования
+    document.addEventListener('keydown', (e) => {
+        if ((e.ctrlKey || e.metaKey) && !e.altKey) {
+            if (e.key === '+' || e.key === '=') {
+                e.preventDefault();
+                zoomIn();
+            } else if (e.key === '-' || e.key === '_') {
+                e.preventDefault();
+                zoomOut();
+            } else if (e.key === '0') {
+                e.preventDefault();
+                resetZoom();
+            }
+        }
+    });
+
+    // Подключение к серверу
+    function connectToServer() {
+        if (isConnected) {
+            disconnectFromServer();
+            return;
+        }
+
+        // Определяем адрес сервера
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        let host = window.location.hostname;
+
+        // Если мы не на localhost, используем текущий хост
+        if (host === 'localhost' || host === '127.0.0.1') {
+            // Запрашиваем IP сервера у пользователя
+            const defaultIP = window.location.hostname === 'localhost' ? '127.0.0.1' : window.location.hostname;
+            host = prompt('Введите IP-адрес сервера:', defaultIP);
+            if (!host) return;
+        }
+
+        serverAddress = `${protocol}//${host}:3001`;
+
+        // Запрос имени пользователя
+        const userName = prompt('Введите ваше имя:', `Пользователь${Math.floor(Math.random() * 1000)}`);
+        if (!userName) return;
+
+        try {
+            // Подключаемся к WebSocket серверу
+            socket = new WebSocket(serverAddress);
+
+            socket.onopen = () => {
+                console.log('Подключено к серверу');
+                isConnected = true;
+                currentUser = {
+                    id: generateUserId(),
+                    name: userName,
+                    color: generateUserColor()
+                };
+
+                updateConnectionStatus(true);
+                connectButton.textContent = 'Отключиться';
+
+                // Отправляем информацию о новом пользователе
+                sendMessage({
+                    type: 'user_joined',
+                    user: currentUser
+                });
+
+                // Запрашиваем текущее состояние доски
+                sendMessage({
+                    type: 'get_board'
+                });
+            };
+
+            socket.onmessage = (event) => {
+                const message = JSON.parse(event.data);
+                handleServerMessage(message);
+            };
+
+            socket.onclose = () => {
+                console.log('Соединение закрыто');
+                isConnected = false;
+                updateConnectionStatus(false);
+                connectButton.textContent = 'Подключиться';
+            };
+
+            socket.onerror = (error) => {
+                console.error('Ошибка WebSocket:', error);
+                alert(`Не удалось подключиться к серверу ${serverAddress}. Убедитесь, что сервер запущен.`);
+                isConnected = false;
+                updateConnectionStatus(false);
+                connectButton.textContent = 'Подключиться';
+            };
+
+        } catch (error) {
+            console.error('Ошибка подключения:', error);
+            alert(`Не удалось подключиться к серверу ${serverAddress}. Убедитесь, что сервер запущен.`);
+        }
+    }
+
+    // Отключение от сервера
+    function disconnectFromServer() {
+        if (socket) {
+            sendMessage({
+                type: 'user_left',
+                userId: currentUser.id
+            });
+            socket.close();
+            socket = null;
+        }
+        isConnected = false;
+        currentUser = null;
+        users = {};
+        updateUsersList();
+        updateConnectionStatus(false);
+        connectButton.textContent = 'Подключиться';
+    }
+
+    // Отправка сообщение на сервер
+    function sendMessage(message) {
+        if (socket && socket.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify(message));
+        }
+    }
+
+    // Обработка сообщений от сервера
+    function handleServerMessage(message) {
+        switch (message.type) {
+            case 'board_data':
+                // Сохраняем состояние свернутости колонок
+                if (message.data.columns) {
+                    message.data.columns.forEach(column => {
+                        const existingColumn = boardData.columns.find(c => c.id === column.id);
+                        if (existingColumn) {
+                            column.collapsed = existingColumn.collapsed || false;
+                        }
+                    });
+                }
+                boardData = message.data;
+                // Проверяем дедлайны после загрузки данных
+                checkDeadlines();
+                renderBoard();
+                break;
+
+            case 'card_moved':
+                if (message.userId !== currentUser.id) {
+                    applyCardMove(message.cardId, message.fromColumnId, message.toColumnId);
+                }
+                break;
+
+            case 'card_created':
+                if (message.userId !== currentUser.id) {
+                    const column = boardData.columns.find(col => col.id === message.columnId);
+                    if (column) {
+                        column.cards.push(message.card);
+                        // Проверяем дедлайн новой карточки
+                        checkDeadlines();
+                        renderBoard();
+                    }
+                }
+                break;
+
+            case 'card_updated':
+                if (message.userId !== currentUser.id) {
+                    const column = boardData.columns.find(col => col.id === message.columnId);
+                    if (column) {
+                        const cardIndex = column.cards.findIndex(card => card.id === message.card.id);
+                        if (cardIndex !== -1) {
+                            column.cards[cardIndex] = message.card;
+                            // Проверяем дедлайн обновленной карточки
+                            checkDeadlines();
+                            renderBoard();
+                        }
+                    }
+                }
+                break;
+
+            case 'card_deleted':
+                if (message.userId !== currentUser.id) {
+                    const column = boardData.columns.find(col => col.id === message.columnId);
+                    if (column) {
+                        column.cards = column.cards.filter(card => card.id !== message.cardId);
+                        renderBoard();
+                    }
+                }
+                break;
+
+            case 'card_reordered':
+                if (message.userId !== currentUser.id) {
+                    const column = boardData.columns.find(col => col.id === message.columnId);
+                    if (column) {
+                        column.cards = message.cards;
+                        renderBoard();
+                    }
+                }
+                break;
+
+            case 'users_list':
+                users = message.users;
+                updateUsersList();
+                break;
+
+            case 'user_joined':
+                users[message.user.id] = message.user;
+                updateUsersList();
+                showNotification(`Пользователь ${message.user.name} подключился`);
+                break;
+
+            case 'user_left':
+                if (users[message.userId]) {
+                    showNotification(`Пользователь ${users[message.userId].name} отключился`);
+                    delete users[message.userId];
+                    updateUsersList();
+                }
+                break;
+
+            case 'alert_created':
+                showAlertBanner(message.alertText);
+                break;
+
+            case 'alert_cleared':
+                hideAlertBanner();
+                break;
+        }
+    }
+
+    // Показать баннер оповещения
+    function showAlertBanner(alertText) {
+        alertBanner.textContent = alertText;
+        alertBanner.style.display = 'block';
+    }
+
+    // Скрыть баннер оповещения
+    function hideAlertBanner() {
+        alertBanner.style.display = 'none';
+    }
+
+    // Создать оповещение
+    function createAlert(card, columnId) {
+        const column = boardData.columns.find(col => col.id === columnId);
+        const alertText = `🚨 Проблема с заказом "${card.title}" (${card.orderId || 'без номера'}) в колонке "${column.title}"`;
+
+        // Показываем локально
+        showAlertBanner(alertText);
+
+        // Отправляем на сервер для синхронизации
+        if (isConnected) {
+            sendMessage({
+                type: 'alert_created',
+                userId: currentUser.id,
+                alertText: alertText
+            });
+        }
+    }
+
+    // Очистить оповещение
+    function clearAlert() {
+        hideAlertBanner();
+
+        // Отправляем на сервер для синхронизации
+        if (isConnected) {
+            sendMessage({
+                type: 'alert_cleared',
+                userId: currentUser.id
+            });
+        }
+    }
+
+    // Применение перемещения карточки
+    function applyCardMove(cardId, fromColumnId, toColumnId) {
+        // Находим карточку и исходную колонку
+        let sourceColumn = null;
+        let card = null;
+
+        for (const column of boardData.columns) {
+            const cardIndex = column.cards.findIndex(c => c.id === cardId);
+            if (cardIndex !== -1) {
+                sourceColumn = column;
+                card = column.cards[cardIndex];
+                break;
+            }
+        }
+
+        // Если нашли карочку и она не в целевой колонке
+        if (sourceColumn && card && sourceColumn.id !== toColumnId) {
+            // Удаляем из исходной колонки
+            sourceColumn.cards = sourceColumn.cards.filter(c => c.id !== cardId);
+
+            // Добавляем в целевую колонку
+            const targetColumn = boardData.columns.find(col => col.id === toColumnId);
+            if (targetColumn) {
+                targetColumn.cards.push(card);
+                renderBoard();
+            }
+        }
+    }
+
+    // Обновление статуса подключения
+    function updateConnectionStatus(connected) {
+        if (connected) {
+            statusIndicator.className = 'status-indicator status-online';
+            statusText.textContent = 'Подключено';
+            connectionStatus.style.backgroundColor = '#e3fcef';
+            // Добавляем класс для подключенного состояния
+            mainHeader.classList.add('connected');
+        } else {
+            statusIndicator.className = 'status-indicator status-offline';
+            statusText.textContent = 'Не подключено';
+            connectionStatus.style.backgroundColor = '#ffebeb';
+            // Убираем класс для подключенного состояния
+            mainHeader.classList.remove('connected');
+        }
+    }
+
+    // Обновление списка пользователей
+    function updateUsersList() {
+        usersList.innerHTML = '';
+
+        for (const userId in users) {
+            const user = users[userId];
+            const userBadge = document.createElement('div');
+            userBadge.className = 'user-badge';
+            userBadge.innerHTML = `
+                    <div class="user-indicator status-online"></div>
+                    <span>${user.name}</span>
+                `;
+            usersList.appendChild(userBadge);
+        }
+    }
+
+    // Показ уведомления
+    function showNotification(text) {
+        saveNotification.textContent = text;
+        saveNotification.classList.add('show');
+        setTimeout(() => {
+            saveNotification.classList.remove('show');
+        }, 3000);
+    }
+
+    // Генерация ID пользователя
+    function generateUserId() {
+        return 'user_' + Math.random().toString(36).substr(2, 9);
+    }
+
+    // Генерация цвета для пользователя
+    function generateUserColor() {
+        const colors = [
+            '#00b8d9', '#0052cc', '#5243aa', '#ff5630',
+            '#ffab00', '#36b37e', '#00875a', '#253858'
+        ];
+        return colors[Math.floor(Math.random() * colors.length)];
+    }
+
+    // Функция для открытия PDF ссылки
+    function openPdfLink(url, title) {
+        const overlay = document.getElementById('link-overlay');
+        const notification = document.getElementById('link-notification');
+        const notificationText = document.getElementById('link-notification-text');
+        const openBtn = document.getElementById('link-open-btn');
+        const copyBtn = document.getElementById('link-copy-btn');
+        const cancelBtn = document.getElementById('link-cancel-btn');
+
+        // Проверяем тип ссылки
+        const isLocalFile = url.startsWith('file://') || url.startsWith('/') || /^[A-Za-z]:\\/.test(url);
+        const isHttpLink = url.startsWith('http://') || url.startsWith('https://');
+
+        let message = '';
+
+        if (isLocalFile) {
+            message = `Локальный файл: ${url}<br><br>
+                      <strong>Внимание:</strong> Локальные файлы могут не открываться в некоторых браузерах из соображений безопасности.`;
+        } else if (isHttpLink) {
+            message = `Веб-ссылка: ${url}<br><br>
+                      Ссылка откроется в новом окне браузера.`;
+        } else {
+            message = `Ссылка: ${url}<br><br>
+                      Неизвестный формат ссылки.`;
+        }
+
+        notificationText.innerHTML = message;
+
+        // Показываем уведомление
+        overlay.classList.add('show');
+        notification.classList.add('show');
+
+        // Обработчики кнопок
+        const cleanup = () => {
+            overlay.classList.remove('show');
+            notification.classList.remove('show');
+            openBtn.onclick = null;
+            copyBtn.onclick = null;
+            cancelBtn.onclick = null;
+        };
+
+        openBtn.onclick = () => {
+            cleanup();
+            // Пробуем разные способы открытия
+            try {
+                // Способ 1: Обычное открытие в новом окне
+                const newWindow = window.open(url, '_blank');
+
+                // Если не получилось (браузер заблокировал popup)
+                if (!newWindow || newWindow.closed || typeof newWindow.closed === 'undefined') {
+                    // Способ 2: Пробуем через location (для локальных файлов)
+                    if (isLocalFile) {
+                        showNotification('Браузер заблокировал открытие файла. Скопируйте ссылку и откройте вручную.');
+                    } else {
+                        // Способ 3: Создаем временную ссылку и кликаем по ней
+                        const tempLink = document.createElement('a');
+                        tempLink.href = url;
+                        tempLink.target = '_blank';
+                        tempLink.rel = 'noopener noreferrer';
+                        document.body.appendChild(tempLink);
+                        tempLink.click();
+                        document.body.removeChild(tempLink);
+                    }
+                }
+            } catch (error) {
+                console.error('Ошибка при открытии ссылки:', error);
+                showNotification('Не удалось открыть ссылку. Скопируйте её и откройте вручную.');
+            }
+        };
+
+        copyBtn.onclick = () => {
+            navigator.clipboard.writeText(url).then(() => {
+                showNotification('Ссылка скопирована в буфер обмена');
+                cleanup();
+            }).catch(() => {
+                // Fallback для старых браузеров
+                const textArea = document.createElement('textarea');
+                textArea.value = url;
+                document.body.appendChild(textArea);
+                textArea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textArea);
+                showNotification('Ссылка скопирована в буфер обмена');
+                cleanup();
+            });
+        };
+
+        cancelBtn.onclick = cleanup;
+        overlay.onclick = cleanup;
+    }
+
+    // Отрисовка доски
+    function renderBoard() {
+        boardElement.innerHTML = '';
+
+        boardData.columns.forEach(column => {
+            const columnElement = document.createElement('div');
+            columnElement.className = column.collapsed ? 'column collapsed' : 'column';
+            columnElement.dataset.columnId = column.id;
+
+            // Заголовок колонки
+            const columnHeader = document.createElement('div');
+            columnHeader.className = 'column-header';
+
+            const titleSpan = document.createElement('span');
+            titleSpan.className = 'column-title';
+            titleSpan.textContent = column.title;
+
+            columnHeader.appendChild(titleSpan);
+
+            // Счетчик карточек
+            const cardsCounter = document.createElement('div');
+            cardsCounter.className = 'cards-counter';
+            cardsCounter.textContent = column.cards.length;
+
+            // Добавляем класс в зависимости от количества карточек
+            if (column.cards.length === 0) {
+                cardsCounter.classList.add('cards-zero');
+            } else if (column.cards.length <= 5) {
+                cardsCounter.classList.add('cards-few');
+            } else if (column.cards.length <= 10) {
+                cardsCounter.classList.add('cards-medium');
+            } else {
+                cardsCounter.classList.add('cards-many');
+            }
+
+            columnHeader.appendChild(cardsCounter);
+
+            // Кнопка сворачивания/разворачивания
+            const collapseBtn = document.createElement('button');
+            collapseBtn.className = 'collapse-btn';
+            collapseBtn.innerHTML = column.collapsed ? '+' : '−';
+            collapseBtn.title = column.collapsed ? 'Развернуть колонку' : 'Свернуть колонку';
+            collapseBtn.onclick = () => toggleColumnCollapse(column.id);
+            columnHeader.appendChild(collapseBtn);
+
+            columnElement.appendChild(columnHeader);
+
+            // Контейнер для карточек (только если колонка не свернута)
+            if (!column.collapsed) {
+                const cardsContainer = document.createElement('div');
+                cardsContainer.className = 'cards-container';
+                columnElement.appendChild(cardsContainer);
+
+                // Карточки
+                column.cards.forEach(card => {
+                    const cardElement = createCardElement(card, column.id);
+                    cardsContainer.appendChild(cardElement);
+                });
+
+                // Кнопка добавления карточки
+                const addButton = document.createElement('button');
+                addButton.className = 'add-card-btn';
+                addButton.textContent = '+ Добавить';
+                addButton.onclick = () => showCardForm(column.id, cardsContainer, addButton);
+                columnElement.appendChild(addButton);
+            }
+
+            boardElement.appendChild(columnElement);
+        });
+
+        makeCardsDraggable();
+    }
+
+    // Переключение состояния свернутости колонки
+    function toggleColumnCollapse(columnId) {
+        const column = boardData.columns.find(col => col.id === columnId);
+        if (column) {
+            column.collapsed = !column.collapsed;
+            saveBoard(false);
+            renderBoard();
+        }
+    }
+
+    // Создание элемента карточки
+    function createCardElement(card, columnId) {
+        const cardElement = document.createElement('div');
+        cardElement.className = `card urgency-${card.urgency || 'medium'}`;
+
+        // Добавляем класс в зависимости от выбранной машины
+        if (card.machine === 'KBA') {
+            cardElement.classList.add('machine-kba');
+        } else if (card.machine === 'ROLAND') {
+            cardElement.classList.add('machine-roland');
+        }
+
+        // Добавляем классы для дедлайнов
+        if (card.deadlineStatus === 'overdue') {
+            cardElement.classList.add('overdue');
+        } else if (card.deadlineStatus === 'due-soon' || card.deadlineStatus === 'due-today') {
+            cardElement.classList.add('due-soon');
+        }
+
+        cardElement.dataset.cardId = card.id;
+        cardElement.draggable = true;
+
+        // Вертикальная полоска приоритета
+        const priorityStrip = document.createElement('div');
+        priorityStrip.className = `priority-strip priority-${card.priority || 'medium'}`;
+
+        // Контейнер для содержимого карточки (без полоски приоритета)
+        const cardContent = document.createElement('div');
+        cardContent.className = 'card-content';
+        cardContent.style.flex = '1';
+
+        // Контейнер для верхней части карточки (заголовок и номер заказа)
+        const topContainer = document.createElement('div');
+        topContainer.style.display = 'flex';
+        topContainer.style.justifyContent = 'space-between';
+        topContainer.style.alignItems = 'flex-start';
+        topContainer.style.marginBottom = '4px';
+
+        const titleDiv = document.createElement('div');
+        titleDiv.className = 'card-title';
+        titleDiv.textContent = card.title;
+        titleDiv.style.flex = '1';
+        titleDiv.style.marginRight = '8px';
+
+        const idContainer = document.createElement('div');
+        idContainer.style.display = 'flex';
+        idContainer.style.alignItems = 'center';
+        idContainer.style.gap = '4px';
+
+        const idDiv = document.createElement('div');
+        idDiv.className = 'card-id';
+        idDiv.textContent = `#${card.orderId || '00000'}`;
+        idDiv.style.fontWeight = 'bold';
+        idDiv.style.fontSize = 'calc(0.95em * var(--zoom-level))';
+        idDiv.style.color = '#0052cc';
+        idDiv.style.whiteSpace = 'nowrap';
+
+        // Добавляем иконку ссылки
+        const linkIcon = document.createElement('span');
+        linkIcon.className = card.pdfLink ? 'card-link' : 'card-link disabled';
+        linkIcon.innerHTML = '🔗';
+        linkIcon.title = card.pdfLink ? 'Открыть PDF файл' : 'Ссылка не указана';
+
+        if (card.pdfLink) {
+            linkIcon.onclick = (e) => {
+                e.stopPropagation();
+                openPdfLink(card.pdfLink, card.title);
+            };
+        }
+
+        idContainer.appendChild(idDiv);
+        idContainer.appendChild(linkIcon);
+
+        topContainer.appendChild(titleDiv);
+        topContainer.appendChild(idContainer);
+
+        const sheetsDiv = document.createElement('div');
+        sheetsDiv.className = 'card-info';
+        sheetsDiv.textContent = `Листов: ${card.sheets || '0'}`;
+
+        // Контейнер для изделия и материала в одной строке
+        const productMaterialRow = document.createElement('div');
+        productMaterialRow.className = 'product-material-row';
+
+        const productTypeDiv = document.createElement('div');
+        productTypeDiv.className = 'card-info';
+        productTypeDiv.textContent = `Изделие: ${card.productType || 'Не указано'}`;
+
+        const materialDiv = document.createElement('div');
+        materialDiv.className = 'card-info';
+        materialDiv.textContent = `Материал: ${card.material || 'Не указан'}`;
+
+        productMaterialRow.appendChild(productTypeDiv);
+        productMaterialRow.appendChild(materialDiv);
+
+        // Добавляем информацию о машине
+        const machineDiv = document.createElement('div');
+        machineDiv.className = 'card-info';
+        machineDiv.textContent = `Машина: ${card.machine ? card.machine : 'Не указана'}`;
+
+        const startDateDiv = document.createElement('div');
+        startDateDiv.className = 'card-info';
+        startDateDiv.textContent = `Запуск: ${formatDate(card.startDate) || 'Не указана'}`;
+
+        const deadlineDiv = document.createElement('div');
+        deadlineDiv.className = 'deadline-info';
+
+        // Добавляем класс в зависимости от статуса дедлайна
+        if (card.deadlineStatus === 'overdue') {
+            deadlineDiv.classList.add('deadline-overdue');
+            deadlineDiv.innerHTML = `⏰ ПРОСРОЧЕНО: ${formatDate(card.deadline) || 'Не указан'}`;
+        } else if (card.deadlineStatus === 'due-today') {
+            deadlineDiv.classList.add('deadline-soon');
+            deadlineDiv.innerHTML = `⚠️ СЕГОДНЯ: ${formatDate(card.deadline) || 'Не указан'}`;
+        } else if (card.deadlineStatus === 'due-soon') {
+            deadlineDiv.classList.add('deadline-soon');
+            deadlineDiv.innerHTML = `⚠️ СКОРО: ${formatDate(card.deadline) || 'Не указан'}`;
+        } else {
+            deadlineDiv.innerHTML = `📅 Дедлайн: ${formatDate(card.deadline) || 'Не указан'}`;
+        }
+
+        const tagsDiv = document.createElement('div');
+        tagsDiv.className = 'card-tags';
+
+        if (card.tags && card.tags.length > 0) {
+            card.tags.forEach(tag => {
+                const tagSpan = document.createElement('span');
+                tagSpan.className = `card-tag tag-${tag}`;
+                tagSpan.textContent = getTagName(tag);
+                tagsDiv.appendChild(tagSpan);
+            });
+        }
+
+        // Кнопки действий с карточкой
+        const actionsDiv = document.createElement('div');
+        actionsDiv.className = 'card-actions';
+
+        const alertBtn = document.createElement('button');
+        alertBtn.className = 'card-action-btn alert-card';
+        alertBtn.innerHTML = '⚠️';
+        alertBtn.title = 'Сообщить о проблеме';
+        alertBtn.onclick = (e) => {
+            e.stopPropagation();
+            createAlert(card, columnId);
+        };
+
+        const editBtn = document.createElement('button');
+        editBtn.className = 'card-action-btn edit-card';
+        editBtn.innerHTML = '✏️';
+        editBtn.title = 'Редактировать карточку';
+        editBtn.onclick = (e) => {
+            e.stopPropagation();
+            showEditCardForm(card, columnId, cardElement);
+        };
+
+        const deleteBtn = document.createElement('button');
+        deleteBtn.className = 'card-action-btn delete-card';
+        deleteBtn.innerHTML = '❌';
+        deleteBtn.title = 'Удалить карточку';
+        deleteBtn.onclick = (e) => {
+            e.stopPropagation();
+            deleteCard(card.id, columnId);
+        };
+
+        actionsDiv.appendChild(alertBtn);
+        actionsDiv.appendChild(editBtn);
+        actionsDiv.appendChild(deleteBtn);
+
+        // Собираем карточку
+        cardContent.appendChild(topContainer);
+        cardContent.appendChild(sheetsDiv);
+        cardContent.appendChild(productMaterialRow);
+        cardContent.appendChild(machineDiv);
+        cardContent.appendChild(startDateDiv);
+        cardContent.appendChild(deadlineDiv);
+        if (card.tags && card.tags.length > 0) {
+            cardContent.appendChild(tagsDiv);
+        }
+        cardContent.appendChild(actionsDiv);
+
+        cardElement.appendChild(priorityStrip);
+        cardElement.appendChild(cardContent);
+
+        return cardElement;
+    }
+
+    // Показ формы редактирования карточки
+    function showEditCardForm(card, columnId, cardElement) {
+        // Заменяем карточку формой редактирования
+        const form = document.createElement('div');
+        form.className = 'card-form';
+        form.innerHTML = `
+                <input type="text" placeholder="Название заказа" id="edit-card-title" value="${escapeHtml(card.title || '')}" required>
+                <input type="text" placeholder="Номер заказа" id="edit-card-order-id" value="${escapeHtml(card.orderId || '')}">
+
+                <div class="link-input-container">
+                    <label for="edit-card-pdf-link">Ссылка на PDF файл:</label>
+                    <input type="text" placeholder="file:///C:/path/to/file.pdf или https://example.com/file.pdf" id="edit-card-pdf-link"
+                           class="link-input" value="${escapeHtml(card.pdfLink || '')}">
+<!--                    <div class="link-help">-->
+<!--                        Поддерживаются: локальные пути (file:///C:/...), сетевые пути (\\server\folder), веб-ссылки (https://...)-->
+<!--                    </div>-->
+                </div>
+
+                <input type="number" placeholder="Количество листов" id="edit-card-sheets" value="${card.sheets || ''}" min="0">
+
+                <select id="edit-card-product-type">
+                    <option value="">Выберите вид изделия</option>
+                    ${productTypes.map(type => `
+                        <option value="${type}" ${card.productType === type ? 'selected' : ''}>${type}</option>
+                    `).join('')}
+                </select>
+
+                <select id="edit-card-material">
+                    <option value="">Выберите материал</option>
+                    ${materialTypes.map(material => `
+                        <option value="${material}" ${card.material === material ? 'selected' : ''}>${material}</option>
+                    `).join('')}
+                </select>
+
+                <label for="edit-card-start-date">Дата запуска:</label>
+                <input type="date" id="edit-card-start-date" value="${card.startDate || ''}">
+
+                <label for="edit-card-deadline">Дедлайн:</label>
+                <input type="date" id="edit-card-deadline" value="${card.deadline || ''}">
+
+                <select id="edit-card-priority">
+                    <option value="high" ${card.priority === 'high' ? 'selected' : ''}>Высокий приоритет</option>
+                    <option value="medium" ${card.priority === 'medium' || !card.priority ? 'selected' : ''}>Средний приоритет</option>
+                    <option value="low" ${card.priority === 'low' ? 'selected' : ''}>Низкий приоритет</option>
+                </select>
+
+                <select id="edit-card-urgency">
+                    <option value="high" ${card.urgency === 'high' ? 'selected' : ''}>Срочный</option>
+                    <option value="medium" ${card.urgency === 'medium' || !card.urgency ? 'selected' : ''}>Обычный</option>
+                    <option value="low" ${card.urgency === 'low' ? 'selected' : ''}>Не срочный</option>
+                </select>
+
+                <div class="tags-selector" id="edit-card-tags">
+                    ${availableTags.map(tag => `
+                        <div class="tag-option ${card.tags && card.tags.includes(tag.id) ? 'selected' : ''}"
+                             data-tag="${tag.id}" onclick="toggleTag(this)">
+                            ${tag.name}
+                        </div>
+                    `).join('')}
+                </div>
+
+                <select id="edit-card-machine">
+                    <option value="none">Выберите печатную машину</option>
+                    <option value="KBA" ${card.machine === 'KBA' ? 'selected' : ''}>KBA</option>
+                    <option value="ROLAND" ${card.machine === 'ROLAND' ? 'selected' : ''}>ROLAND</option>
+                </select>
+
+                <div class="card-form-actions">
+                    <button id="save-edit-btn">💾 Сохранить</button>
+                    <button id="cancel-edit-btn">❌ Отмена</button>
+                </div>
+            `;
+
+        cardElement.replaceWith(form);
+
+        // Функция для переключения тегов
+        window.toggleTag = function(element) {
+            element.classList.toggle('selected');
+        };
+
+        document.getElementById('save-edit-btn').onclick = () => {
+            const title = document.getElementById('edit-card-title').value;
+            const orderId = document.getElementById('edit-card-order-id').value;
+            const pdfLink = document.getElementById('edit-card-pdf-link').value;
+            const sheets = document.getElementById('edit-card-sheets').value;
+            const productType = document.getElementById('edit-card-product-type').value;
+            const material = document.getElementById('edit-card-material').value;
+            const startDate = document.getElementById('edit-card-start-date').value;
+            const deadline = document.getElementById('edit-card-deadline').value;
+            const priority = document.getElementById('edit-card-priority').value;
+            const urgency = document.getElementById('edit-card-urgency').value;
+            const machine = document.getElementById('edit-card-machine').value;
+
+            // Получаем выбранные теги
+            const selectedTags = [];
+            document.querySelectorAll('#edit-card-tags .tag-option.selected').forEach(option => {
+                selectedTags.push(option.dataset.tag);
+            });
+
+            if (title) {
+                const updatedCard = {
+                    ...card,
+                    title,
+                    orderId,
+                    pdfLink: pdfLink || null,
+                    sheets: sheets ? parseInt(sheets) : 0,
+                    productType,
+                    material,
+                    startDate,
+                    deadline,
+                    priority,
+                    urgency,
+                    machine,
+                    tags: selectedTags
+                };
+
+                // Находим колонку и обновляем карточку
+                const column = boardData.columns.find(col => col.id === columnId);
+                if (column) {
+                    const cardIndex = column.cards.findIndex(c => c.id === card.id);
+                    if (cardIndex !== -1) {
+                        column.cards[cardIndex] = updatedCard;
+
+                        if (isConnected) {
+                            sendMessage({
+                                type: 'card_updated',
+                                userId: currentUser.id,
+                                columnId: columnId,
+                                card: updatedCard
+                            });
+                        } else {
+                            saveBoard(true);
+                        }
+
+                        // Проверяем дедлайн после обновления
+                        checkDeadlines();
+                        renderBoard();
+                    }
+                }
+            }
+        };
+
+        document.getElementById('cancel-edit-btn').onclick = () => {
+            form.replaceWith(cardElement);
+        };
+    }
+
+    // Функция экранирования HTML
+    function escapeHtml(text) {
+        if (!text) return '';
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    // Функция удаления карточки
+    function deleteCard(cardId, columnId) {
+        if (confirm('Вы уверены, что хотите удалить эту карточку?')) {
+            const column = boardData.columns.find(col => col.id === columnId);
+            if (column) {
+                column.cards = column.cards.filter(card => card.id !== cardId);
+
+                if (isConnected) {
+                    sendMessage({
+                        type: 'card_deleted',
+                        userId: currentUser.id,
+                        cardId: cardId,
+                        columnId: columnId
+                    });
+                } else {
+                    saveBoard(true);
+                }
+
+                renderBoard();
+            }
+        }
+    }
+
+    // Показ формы добавления карточки
+    function showCardForm(columnId, cardsContainer, addButton) {
+        addButton.style.display = 'none';
+
+        const form = document.createElement('div');
+        form.className = 'card-form';
+
+        // Устанавливаем текущую дату по умолчанию для дедлайна (через 7 дней)
+        const defaultDeadline = new Date();
+        defaultDeadline.setDate(defaultDeadline.getDate() + 7);
+        const deadlineValue = defaultDeadline.toISOString().split('T')[0];
+
+        // Устанавливаем текущую дату для запуска
+        const startDateValue = new Date().toISOString().split('T')[0];
+
+        form.innerHTML = `
+                <input type="text" placeholder="Название заказа" id="card-title" required>
+                <input type="text" placeholder="Номер заказа" id="card-order-id">
+
+                <div class="link-input-container">
+                    <label for="card-pdf-link">Ссылка на PDF файл:</label>
+                    <input type="text" placeholder="file:///C:/path/to/file.pdf или https://example.com/file.pdf" id="card-pdf-link" class="link-input">
+<!--                    <div class="link-help">-->
+<!--                        Поддерживаются: локальные пути (file:///C:/...), сетевые пути (\\server\folder), веб-ссылки (https://...)-->
+<!--                    </div>-->
+                </div>
+
+                <input type="number" placeholder="Количество листов" id="card-sheets" min="0" value="0">
+
+                <select id="card-product-type">
+                    <option value="">Выберите вид изделия</option>
+                    ${productTypes.map(type => `
+                        <option value="${type}">${type}</option>
+                    `).join('')}
+                </select>
+
+                <select id="card-material">
+                    <option value="">Выберите материал</option>
+                    ${materialTypes.map(material => `
+                        <option value="${material}">${material}</option>
+                    `).join('')}
+                </select>
+
+                <label for="card-start-date">Дата запуска:</label>
+                <input type="date" id="card-start-date" value="${startDateValue}">
+
+                <label for="card-deadline">Дедлайн:</label>
+                <input type="date" id="card-deadline" value="${deadlineValue}">
+
+                <select id="card-priority">
+                    <option value="high">Высокий приоритет</option>
+                    <option value="medium" selected>Средний приоритет</option>
+                    <option value="low">Низкий приоритет</option>
+                </select>
+
+                <select id="card-urgency">
+                    <option value="high">Срочный</option>
+                    <option value="medium" selected>Обычный</option>
+                    <option value="low">Не срочный</option>
+                </select>
+
+                <div class="tags-selector" id="card-tags">
+                    ${availableTags.map(tag => `
+                        <div class="tag-option" data-tag="${tag.id}" onclick="toggleTag(this)">
+                            ${tag.name}
+                        </div>
+                    `).join('')}
+                </select>
+
+                <select id="card-machine">
+                    <option value="none">Выберите печатную машину</option>
+                    <option value="KBA">KBA</option>
+                    <option value="ROLAND">ROLAND</option>
+                </select>
+
+                <div class="card-form-actions">
+                    <button id="add-card-btn">Добавить</button>
+                    <button id="cancel-card-btn">Отмена</button>
+                </div>
+            `;
+
+        cardsContainer.appendChild(form);
+
+        // Функция для переключения тегов
+        window.toggleTag = function(element) {
+            element.classList.toggle('selected');
+        };
+
+        document.getElementById('add-card-btn').onclick = () => {
+            const title = document.getElementById('card-title').value;
+            const orderId = document.getElementById('card-order-id').value;
+            const pdfLink = document.getElementById('card-pdf-link').value;
+            const sheets = document.getElementById('card-sheets').value;
+            const productType = document.getElementById('card-product-type').value;
+            const material = document.getElementById('card-material').value;
+            const startDate = document.getElementById('card-start-date').value;
+            const deadline = document.getElementById('card-deadline').value;
+            const priority = document.getElementById('card-priority').value;
+            const urgency = document.getElementById('card-urgency').value;
+            const machine = document.getElementById('card-machine').value;
+
+            // Получаем выбранные теги
+            const selectedTags = [];
+            document.querySelectorAll('#card-tags .tag-option.selected').forEach(option => {
+                selectedTags.push(option.dataset.tag);
+            });
+
+            if (title) {
+                const newCard = {
+                    id: Date.now(),
+                    title,
+                    orderId: orderId || `T-${Math.floor(23000 + Math.random() * 1000)}`,
+                    pdfLink: pdfLink || null,
+                    sheets: sheets ? parseInt(sheets) : 0,
+                    productType,
+                    material,
+                    startDate,
+                    deadline,
+                    priority,
+                    urgency,
+                    machine,
+                    tags: selectedTags
+                };
+
+                // Находим колонку и добавляем карточку
+                const column = boardData.columns.find(col => col.id === columnId);
+                if (column) {
+                    column.cards.push(newCard);
+
+                    if (isConnected) {
+                        sendMessage({
+                            type: 'card_created',
+                            userId: currentUser.id,
+                            columnId: columnId,
+                            card: newCard
+                        });
+                    } else {
+                        saveBoard(true);
+                    }
+
+                    // Проверяем дедлайн новой карточки
+                    checkDeadlines();
+                    renderBoard();
+                }
+            }
+        };
+
+        document.getElementById('cancel-card-btn').onclick = () => {
+            cardsContainer.removeChild(form);
+            addButton.style.display = 'block';
+        };
+    }
+
+    // Делаем карточки перетаскиваемыми
+    function makeCardsDraggable() {
+        const cards = document.querySelectorAll('.card');
+        const columns = document.querySelectorAll('.column');
+        const cardsContainers = document.querySelectorAll('.cards-container');
+
+        cards.forEach(card => {
+            card.addEventListener('dragstart', dragStart);
+            card.addEventListener('dragend', dragEnd);
+        });
+
+        columns.forEach(column => {
+            column.addEventListener('dragover', dragOver);
+            column.addEventListener('dragenter', dragEnter);
+            column.addEventListener('dragleave', dragLeave);
+            column.addEventListener('drop', dragDrop);
+        });
+
+        // Добавляем обработчики для контейнеров карточек (для перетаскивания внутри колонки)
+        cardsContainers.forEach(container => {
+            container.addEventListener('dragover', dragOverContainer);
+            container.addEventListener('drop', dropInContainer);
+        });
+    }
+
+    // Обработчики событий перетаскивания
+    function dragStart() {
+        draggedCard = this;
+        sourceColumnId = parseInt(this.parentElement.parentElement.dataset.columnId);
+        setTimeout(() => {
+            this.style.opacity = '0.5';
+            this.classList.add('dragging');
+        }, 0);
+    }
+
+    function dragEnd() {
+        this.style.opacity = '1';
+        this.classList.remove('dragging');
+        draggedCard = null;
+        sourceColumnId = null;
+
+        // Убираем классы drag-over со всех элементов
+        document.querySelectorAll('.drag-over').forEach(el => {
+            el.classList.remove('drag-over');
+        });
+    }
+
+    function dragOver(e) {
+        e.preventDefault();
+        this.classList.add('drag-over');
+    }
+
+    function dragEnter(e) {
+        e.preventDefault();
+        this.classList.add('drag-over');
+    }
+
+    function dragLeave() {
+        this.classList.remove('drag-over');
+    }
+
+    function dragOverContainer(e) {
+        e.preventDefault();
+        this.classList.add('drag-over');
+
+        const afterElement = getDragAfterElement(this, e.clientY);
+        const draggable = document.querySelector('.dragging');
+
+        if (draggable) {
+            if (afterElement == null) {
+                this.appendChild(draggable);
+            } else {
+                this.insertBefore(draggable, afterElement);
+            }
+        }
+    }
+
+    function dropInContainer(e) {
+        e.preventDefault();
+        this.classList.remove('drag-over');
+
+        const container = this;
+        const columnId = parseInt(container.parentElement.dataset.columnId);
+        const cardId = parseInt(draggedCard.dataset.cardId);
+
+        // Обновляем порядок карточек в данных
+        updateCardsOrder(container, columnId, cardId);
+    }
+
+    function dragDrop() {
+        this.style.backgroundColor = 'var(--color-column)';
+        this.classList.remove('drag-over');
+
+        if (draggedCard) {
+            const targetColumnId = parseInt(this.dataset.columnId);
+            const cardId = parseInt(draggedCard.dataset.cardId);
+
+            // Если колонка изменилась
+            if (sourceColumnId !== targetColumnId) {
+                // Применяем изменения локально
+                applyCardMove(cardId, sourceColumnId, targetColumnId);
+
+                // Отправляем на сервер, если подключены
+                if (isConnected) {
+                    sendMessage({
+                        type: 'card_moved',
+                        userId: currentUser.id,
+                        cardId: cardId,
+                        fromColumnId: sourceColumnId,
+                        toColumnId: targetColumnId
+                    });
+                } else {
+                    saveBoard(false);
+                }
+            } else {
+                // Если перетаскивание внутри той же колонки
+                const container = this.querySelector('.cards-container');
+                if (container) {
+                    updateCardsOrder(container, targetColumnId, cardId);
+                }
+            }
+        }
+    }
+
+    // Функция для определения позиции после какого элемента вставлять
+    function getDragAfterElement(container, y) {
+        const draggableElements = [...container.querySelectorAll('.card:not(.dragging)')];
+
+        return draggableElements.reduce((closest, child) => {
+            const box = child.getBoundingClientRect();
+            const offset = y - box.top - box.height / 2;
+
+            if (offset < 0 && offset > closest.offset) {
+                return { offset: offset, element: child };
+            } else {
+                return closest;
+            }
+        }, { offset: Number.NEGATIVE_INFINITY }).element;
+    }
+
+    // Функция обновления порядка карточек
+    function updateCardsOrder(container, columnId, movedCardId) {
+        const column = boardData.columns.find(col => col.id === columnId);
+        if (!column) return;
+
+        // Получаем новый порядок карточек из DOM
+        const newOrder = [];
+        const cardElements = container.querySelectorAll('.card');
+        cardElements.forEach(cardElement => {
+            const cardId = parseInt(cardElement.dataset.cardId);
+            const card = column.cards.find(c => c.id === cardId);
+            if (card) {
+                newOrder.push(card);
+            }
+        });
+
+        // Обновляем данные
+        column.cards = newOrder;
+
+        // Синхронизируем с сервером, если подключены
+        if (isConnected) {
+            sendMessage({
+                type: 'card_reordered',
+                userId: currentUser.id,
+                columnId: columnId,
+                cards: newOrder
+            });
+        } else {
+            saveBoard(false);
+        }
+    }
+
+    // Вспомогательные функции
+    function getTagName(tag) {
+        const tagNames = {
+            'design': 'Формы',
+            'print': 'Бумага',
+            'cut': 'Подрез',
+            'bind': 'Гофра',
+            'done': 'Пленка',
+            'one': '1прог',
+            'two': '2прог'
+        };
+        return tagNames[tag] || tag;
+    }
+
+    function formatDate(dateString) {
+        if (!dateString) return '';
+        const options = { day: '2-digit', month: '2-digit', year: 'numeric' };
+        return new Date(dateString).toLocaleDateString('ru-RU', options);
+    }
+
+    // Сохранение доски в localStorage
+    function saveBoard(showNotification) {
+        localStorage.setItem('typographyKanban', JSON.stringify(boardData));
+
+        if (showNotification) {
+            // Показываем уведомление о сохранении
+            saveNotification.textContent = 'Данные сохранены';
+            saveNotification.classList.add('show');
+            setTimeout(() => {
+                saveNotification.classList.remove('show');
+            }, 2000);
+        }
+    }
+
+    // Сброс доски локально
+    function resetBoard() {
+        if (confirm('Вы уверены, что хотите сбросить локальную доску? Все локальные данные будут удалены.')) {
+            localStorage.removeItem('typographyKanban');
+            window.location.reload();
+        }
+    }
+
+    // Сброс доски на сервере
+    function resetServerBoard() {
+        if (confirm('Вы уверены, что хотите сбросить доску на сервере? Все данные будут удалены для всех пользователей.')) {
+            if (isConnected) {
+                sendMessage({
+                    type: 'reset_board'
+                });
+                showNotification('Запрос на сброс отправлен');
+            } else {
+                alert('Не подключено к серверу. Сброс возможен только при активном подключении.');
+            }
+        }
+    }
+
+    // Обработчики кнопок
+    // saveButton.addEventListener('click', () => saveBoard(true));
+    // resetButton.addEventListener('click', resetBoard);
+    // resetServerButton.addEventListener('click', resetServerBoard);
+    connectButton.addEventListener('click', connectToServer);
+    zoomInButton.addEventListener('click', zoomIn);
+    zoomOutButton.addEventListener('click', zoomOut);
+    zoomResetButton.addEventListener('click', resetZoom);
+
+    // Добавляем обработчик для закрытия оповещения по клику
+    alertBanner.addEventListener('click', clearAlert);
+
+    // Инициализация при загрузке
+    document.addEventListener('DOMContentLoaded', initBoard);
+</script>
+</body>
+</html>
